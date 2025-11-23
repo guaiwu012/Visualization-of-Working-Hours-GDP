@@ -1,0 +1,751 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Working Hours × GDP — Choropleth</title>
+  <style>
+    html, body { height: 100%; margin: 0; padding: 0; }
+    #map { height: calc(100% - 420px); } 
+    .panel {
+      position:absolute; top:10px; left:10px; z-index:3; background:#fff;
+      padding:10px 12px; border-radius:12px; box-shadow:0 6px 20px rgba(0,0,0,.15);
+      font-family:ui-sans-serif,system-ui;
+    }
+    .legend {
+      position:absolute; bottom:430px; left:10px; z-index:2; background:#fff;
+      padding:10px 12px; border-radius:12px; box-shadow:0 6px 20px rgba(0,0,0,.15);
+      font-family:ui-sans-serif,system-ui;
+    }
+    .chip{display:inline-block;width:18px;height:18px;margin-right:6px;border-radius:3px;vertical-align:middle}
+    .muted{color:#666} label{font-weight:600}
+    select,input{padding:6px 8px;border-radius:8px;border:1px solid #ddd}
+    .error{color:#b91c1c;font-weight:600}
+    button{padding:6px 10px;border:1px solid #ddd;border-radius:8px;background:#fafafa;cursor:pointer}
+
+    #chartPanel { height: 420px; background:#fafafa; border-top:1px solid #ddd;
+      display:flex; flex-direction:column; font-family: ui-sans-serif, system-ui; }
+    #tabs { display:flex; gap:8px; padding:8px 14px; background:#fff; border-bottom:1px solid #eee; align-items:center; flex-wrap:wrap; }
+    .tab { border:1px solid #e5e7eb; background:#f8fafc; border-radius:8px; padding:6px 12px; cursor:pointer; }
+    .tab.active { background:#111827; color:#fff; border-color:#111827; }
+    #tabRight { margin-left:auto; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    #chartBody { flex:1; padding:8px 14px; display:flex; gap:12px; }
+    .row { display:flex; gap:14px; height: 100%; }
+    .col { flex:1; min-width:0; height:100%; }
+    canvas { max-width:100%; height:100% !important; }
+    .pill { background:#f3f4f6; padding:2px 8px; border-radius:999px; border:1px solid #e5e7eb; font-size:12px; }
+    .range-wrap{display:flex;gap:6px;align-items:center}
+
+    /* Admin panel */
+    #adminPanel { display:none; flex-direction:column; gap:8px; border-left:1px solid #e5e7eb; padding-left:12px; width: 40%; }
+    #adminHeader { display:flex; gap:8px; align-items:center; }
+    table { width:100%; border-collapse: collapse; font-size: 12px; }
+    th, td { border-bottom:1px solid #eee; padding:6px; text-align:left; }
+    tbody tr:hover { background:#f9fafb; }
+    .danger { background:#fee2e2; border-color:#fecaca; }
+    .ok { background:#dcfce7; border-color:#bbf7d0; }
+  </style>
+</head>
+<body>
+  <script src="./config.js"></script>
+
+  <div class="panel">
+    <div style="margin-bottom:8px"><strong>Working Hours × GDP (Choropleth)</strong></div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <label for="year">Year</label>
+      <input id="year" type="number" min="1870" max="2100" value="2023" />
+      <label for="layer">Layer</label>
+      <select id="layer">
+        <option value="hours">Working hours</option>
+        <option value="gdp">GDP per capita</option>
+      </select>
+      <button id="refresh">Update</button>
+      <span class="muted" id="status"></span>
+    </div>
+    <div class="muted" style="margin-top:6px">Join key: ISO_A3 ⇄ ISO3</div>
+    <div class="muted" id="apiHint" style="margin-top:4px"></div>
+  </div>
+
+  <div id="map"></div>
+  <div class="legend" id="legend"></div>
+
+  <div id="chartPanel">
+    <div id="tabs">
+      <button id="tabCountry" class="tab active">Country</button>
+      <span class="pill" id="selCountry">No country selected</span>
+      <span class="pill" id="selCode">—</span>
+
+      <button id="tabContinent" class="tab">Continent</button>
+
+      <div id="tabRight">
+        <label class="muted">Region</label>
+        <select id="contSelect">
+          <option value="__ALL__">All</option>
+        </select>
+
+        <label for="contMetric" class="muted">Metric</label>
+        <select id="contMetric">
+          <option value="hours">Working hours</option>
+          <option value="gdp_per_capita">GDP per capita</option>
+        </select>
+
+        <span class="muted">Years</span>
+        <span class="range-wrap">
+          <input id="yrStart" type="range" min="1950" max="2023" value="1980" />
+          <input id="yrEnd"   type="range" min="1950" max="2023" value="2023" />
+          <span class="pill" id="yrLabel">1980–2023</span>
+        </span>
+
+        <button id="closeChart">Clear</button>
+
+        <!-- report -->
+        <label class="muted">Report</label>
+        <select id="reportType" title="Select a report template">
+          <option value="1">#1 Continent YoY + fastest decline</option>
+          <option value="2">#2 Country vs Continent gap</option>
+          <option value="3">#3 Top/Bottom ranking</option>
+          <option value="4">#4 Event impact</option>
+          <option value="5">#5 GDP vs Hours correlation</option>
+        </select>
+        <button id="exportReport">Export</button>
+        <button id="exportReportAI">AI Export</button>
+
+        <!-- admin -->
+        <button id="adminLogin">Admin</button>
+        <span id="adminBadge" class="pill" style="display:none;">ADMIN</span>
+      </div>
+    </div>
+
+    <div id="chartBody">
+      <div id="countryRow" class="col"><canvas id="tsChart"></canvas></div>
+      <div id="continentRow" class="col" style="display:none"><canvas id="contChart"></canvas></div>
+
+      <!-- Admin panel on the right -->
+      <div id="adminPanel" class="col">
+        <div id="adminHeader">
+          <strong>Admin Panel</strong>
+          <button id="btnReloadAdmin">Reload</button>
+          <span class="muted">Delete/restore affects visitor data immediately.</span>
+        </div>
+
+        <div style="display:flex; gap:10px;">
+          <div style="flex:1;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <strong>All Countries</strong>
+              <input id="filterAll" placeholder="Search..." />
+            </div>
+            <div style="height:150px; overflow:auto; border:1px solid #eee; border-radius:8px; background:#fff;">
+              <table id="tblAll">
+                <thead><tr><th>ISO3</th><th>Country</th><th>Continent</th><th>Action</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div style="flex:1;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <strong>Deleted (restore)</strong>
+              <input id="filterDel" placeholder="Search..." />
+            </div>
+            <div style="height:150px; overflow:auto; border:1px solid #eee; border-radius:8px; background:#fff;">
+              <table id="tblDel">
+                <thead><tr><th>ISO3</th><th>Country</th><th>Continent</th><th>Deleted at</th><th>Reason</th><th>Action</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div id="adminSql" class="muted"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script>
+    // -------- Config --------
+    const DEFAULT_API = 'http://127.0.0.1:8010';
+    const urlApi = new URLSearchParams(location.search).get('api');
+    const storedApi = localStorage.getItem('backend');
+    const BACKEND_BASE = urlApi || storedApi || DEFAULT_API;
+    document.getElementById('apiHint').textContent = `API: ${BACKEND_BASE}`;
+
+    const LOCAL_GEOJSON = './countries.geojson';
+    const REMOTE_GEOJSON = 'https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson';
+
+    const GMAPS_KEY = (window.APP_CONFIG && window.APP_CONFIG.GOOGLE_MAPS_API_KEY) || '';
+    const DS_KEY = (window.APP_CONFIG && window.APP_CONFIG.DEEPSEEK_API_KEY) || '';
+    const ADMIN_PASS = (window.APP_CONFIG && window.APP_CONFIG.ADMIN_PASSWORD) || '';
+
+    async function fetchWithTimeout(url, opts={}, timeoutMs=30000){
+      const controller = new AbortController();
+      const t = setTimeout(()=>controller.abort(), timeoutMs);
+      try{ const res = await fetch(url, { ...opts, signal: controller.signal }); clearTimeout(t); return res; }
+      catch(e){ clearTimeout(t); throw e; }
+    }
+    const num = v => (typeof v==='number'&&isFinite(v))?v:null;
+
+    function colorScale(value,min,max){
+      if(value==null)return'#d3d3d3';
+      const t=(value-min)/(max-min+1e-9);
+      const stops=[[0,[43,131,186]],[.33,[171,221,164]],[.66,[253,174,97]],[1,[215,25,28]]];
+      let c=[43,131,186];
+      for(let i=1;i<stops.length;i++){
+        const [p,col]=stops[i];
+        if(t<=p){
+          const [p0,c0]=stops[i-1],u=(t-p0)/(p-p0);
+          c=[Math.round(c0[0]+u*(col[0]-c0[0])),Math.round(c0[1]+u*(col[1]-c0[1])),Math.round(c0[2]+u*(col[2]-c0[2]))];
+          break;
+        }
+      }
+      return `rgb(${c[0]},${c[1]},${c[2]})`;
+    }
+
+    function renderLegend(title,min,max,unit){
+      const legend=document.getElementById('legend');
+      if(!isFinite(min)||!isFinite(max)){legend.innerHTML='<span class="muted">No data</span>';return;}
+      const breaks=5;
+      let html=`<div style="font-weight:700;margin-bottom:6px">${title}</div>`;
+      for(let i=0;i<breaks;i++){
+        const v=min+(i/(breaks-1))*(max-min);
+        html+=`<div><span class='chip' style='background:${colorScale(v,min,max)}'></span>${v.toLocaleString()}${unit||''}</div>`;
+      }
+      legend.innerHTML=html+`<div class='muted' style='margin-top:6px'>Darker = higher</div>`;
+    }
+
+    let map,metrics={},featuresAdded=false; window.__metricsByName={};
+    let chartCountry, chartContinent;
+    let GEOJSON_URL = LOCAL_GEOJSON;
+
+    let continentCache = null;
+    let membershipCache = null;
+    let selectedContinent = '__ALL__';
+    let yearStart = 1980;
+    let yearEnd   = 2023;
+
+    // ---------- core style ----------
+    function computeDomain(k){
+      const vals=Object.values(metrics||{}).map(d=>num(d[k])).filter(v=>v!=null);
+      if(!vals.length)return[NaN,NaN];
+      return[Math.min(...vals),Math.max(...vals)];
+    }
+
+    function applyStyle(){
+      const layer=document.getElementById('layer').value;
+      const key=(layer==='gdp')?'gdp_per_capita':'hours';
+      const[min,max]=computeDomain(key);
+
+      map.data.setStyle(f=>{
+        const rawIso = f.getProperty('JOIN_ISO3');
+        const nameU  = (f.getProperty('JOIN_NAME') || '').toUpperCase();
+
+        let rec = rawIso ? metrics[rawIso] : window.__metricsByName[nameU];
+        const val = rec ? num(rec[key]) : null;
+
+        const isoKey = String((rawIso || (rec && (rec.iso3 || rec.code)) || '')).trim().toUpperCase();
+
+        let dim=false;
+        if (selectedContinent !== '__ALL__') {
+          if (!membershipCache || !isoKey) {
+            dim = true;
+          } else {
+            const cont = String(membershipCache.membership[isoKey] || '').trim().toLowerCase();
+            const want = String(selectedContinent || '').trim().toLowerCase();
+            if (!cont || cont !== want) dim=true;
+          }
+        }
+
+        return{
+          fillColor: dim ? '#e5e7eb' : colorScale(val,min,max),
+          fillOpacity: dim ? .35 : .75,
+          strokeColor: dim ? '#bbb' : '#555',
+          strokeWeight: .6
+        };
+      });
+      renderLegend(key==='gdp_per_capita'?'GDP per capita (USD)':'Working hours',min,max,key==='gdp_per_capita'?'$':'');
+    }
+
+    async function loadMetrics(){
+      const y=document.getElementById('year').value;
+      const st=document.getElementById('status');
+      st.textContent='Loading…';st.classList.remove('error');
+      try{
+        const r=await fetchWithTimeout(`${BACKEND_BASE}/api/choropleth?year=${y}`,{},30000);
+        const data=await r.json();
+
+        const patched = {};
+        window.__metricsByName = {};
+        for (const [k, rec] of Object.entries(data || {})) {
+          const iso = String(k || '').trim().toUpperCase();
+          const item = { ...(rec || {}), code: iso, iso3: iso };
+          patched[iso] = item;
+          if (item.country) window.__metricsByName[String(item.country).toUpperCase()] = item;
+        }
+        metrics = patched;
+
+        const n=Object.keys(metrics).length;
+        st.textContent=`Loaded ${n} countries`;
+      }catch(e){st.classList.add('error');st.textContent='Backend error';}
+    }
+
+    async function ensureGeoJsonLoaded(){
+      if(featuresAdded)return;
+      try{
+        const r=await fetchWithTimeout(GEOJSON_URL,{},15000);
+        if(!r.ok)throw new Error('geo fail');
+        const gj=await r.json();map.data.addGeoJson(gj);featuresAdded=true;
+      }catch{
+        const r=await fetchWithTimeout(REMOTE_GEOJSON,{},20000);
+        const gj=await r.json();map.data.addGeoJson(gj);featuresAdded=true;
+      }
+
+      const ALIAS={"Côte d'Ivoire":"CIV","Democratic Republic of the Congo":"COD","Republic of the Congo":"COG","Czechia":"CZE","Eswatini":"SWZ","North Macedonia":"MKD","South Korea":"KOR","North Korea":"PRK","Russia":"RUS","Syria":"SYR","United States of America":"USA","United Kingdom":"GBR","Venezuela":"VEN","Vietnam":"VNM","Laos":"LAO","Brunei":"BRN","Bolivia":"BOL","Tanzania":"TZA","Iran":"IRN","Moldova":"MDA","Palestine":"PSE","Kosovo":"XKX"};
+      map.data.forEach(f=>{
+        let iso=null;f.forEachProperty((v,k)=>{if(iso)return;if(/iso.*a3/i.test(k)&&typeof v==='string'&&v.length>=3)iso=v.toUpperCase();});
+        if(!iso){const n=f.getProperty('ADMIN')||f.getProperty('name');if(n&&ALIAS[n])iso=ALIAS[n];}
+        f.setProperty('JOIN_ISO3',iso||null);f.setProperty('JOIN_NAME',(f.getProperty('ADMIN')||f.getProperty('name')||'').toUpperCase());
+      });
+
+      map.data.addListener('click', async e => {
+        setActiveTab('country');
+        const iso3 = e.feature.getProperty('JOIN_ISO3');
+        const name = (e.feature.getProperty('ADMIN') || e.feature.getProperty('name') || '').trim() || iso3 || 'N/A';
+        document.getElementById('selCountry').textContent = name;
+        document.getElementById('selCode').textContent = iso3 || '—';
+        try{
+          const data = await loadSeriesWithFallback(iso3, name);
+          renderCountryChart(data);
+        }catch(err){ console.error('[series] fail', err); if(chartCountry) chartCountry.destroy(); }
+      });
+    }
+
+    async function loadSeriesWithFallback(iso3, name){
+      const tryUrls = [];
+      if (iso3) tryUrls.push(`${BACKEND_BASE}/api/timeseries?code=${iso3}`);
+      if (name) tryUrls.push(`${BACKEND_BASE}/api/timeseries?country=${encodeURIComponent(name)}`);
+      let lastErr;
+      for (const u of tryUrls){
+        try{ const r=await fetchWithTimeout(u,{},30000); if(r.ok) return await r.json(); lastErr = new Error(`HTTP ${r.status}`); }
+        catch(e){ lastErr=e; }
+      }
+      throw lastErr || new Error('No series found');
+    }
+
+    function renderCountryChart(d){
+      const yrs=d?.years||[];const hrs=(d?.hours||[]).map(v=>v==null?null:+v);
+      const gdp=(d?.gdp_per_capita||[]).map(v=>v==null?null:+v);
+      const ctx=document.getElementById('tsChart').getContext('2d');
+      if(chartCountry)chartCountry.destroy();
+      chartCountry=new Chart(ctx,{
+        type:'line',
+        data:{labels:yrs,datasets:[
+          {label:'Working hours',data:hrs,yAxisID:'y1',tension:.2,borderColor:'#d97706',backgroundColor:'rgba(217,119,6,0.2)'},
+          {label:'GDP per capita (USD)',data:gdp,yAxisID:'y2',tension:.2,borderColor:'#2563eb',backgroundColor:'rgba(37,99,235,0.2)'}
+        ]},
+        options:{
+          maintainAspectRatio:false,
+          plugins:{legend:{position:'top'},title:{display:true,text:`${d.country} (${d.code}) — Time series`}},
+          interaction:{mode:'index',intersect:false},
+          scales:{
+            y1:{type:'linear',position:'left',title:{display:true,text:'Hours'},beginAtZero:false},
+            y2:{type:'linear',position:'right',title:{display:true,text:'GDP per capita (USD)'},grid:{drawOnChartArea:false},beginAtZero:false}
+          }
+        }
+      });
+    }
+
+    // ---------- Continent trends ----------
+    async function loadContinentTrends(){
+      if (!continentCache){
+        const r = await fetchWithTimeout(`${BACKEND_BASE}/api/continent_trends`, {}, 30000);
+        continentCache = await r.json();
+      }
+      if (!membershipCache){
+        const r2 = await fetchWithTimeout(`${BACKEND_BASE}/api/continent_membership`, {}, 30000);
+        const raw = await r2.json();
+        const normMembership = {};
+        Object.entries(raw.membership || {}).forEach(([k, v]) => {
+          const iso  = String(k || '').trim().toUpperCase();
+          const cont = String(v || '').trim();
+          if (iso && cont) normMembership[iso] = cont;
+        });
+        const normContinents = Array.from(new Set((raw.continents || []).map(c => String(c || '').trim()))).sort();
+        membershipCache = { membership: normMembership, continents: normContinents };
+
+        const sel = document.getElementById('contSelect');
+        normContinents.forEach(c=>{
+          const opt = document.createElement('option');
+          opt.value = c; opt.textContent = c; sel.appendChild(opt);
+        });
+      }
+      const series = continentCache.series || {};
+      const allYears = new Set();
+      Object.values(series).forEach(v => (v.years||[]).forEach(y => allYears.add(y)));
+      const ys = Array.from(allYears).sort((a,b)=>a-b);
+      const minY = ys[0] || 1950;
+      const maxY = ys[ys.length-1] || 2023;
+      const s = document.getElementById('yrStart');
+      const e = document.getElementById('yrEnd');
+      s.min = e.min = String(minY);
+      s.max = e.max = String(maxY);
+      if (+s.value < minY) s.value = String(minY);
+      if (+e.value > maxY) e.value = String(maxY);
+      yearStart = +s.value; yearEnd = +e.value;
+      updateYearLabel();
+      return continentCache;
+    }
+
+    function filterContinentPayload(payload, metric, y0, y1){
+      const out = { continents: payload.continents, series: {} };
+      const S = payload.series || {};
+      Object.keys(S).forEach(cont=>{
+        const yrs = S[cont].years || [];
+        const vals = metric==='hours' ? (S[cont].hours||[]) : (S[cont].gdp||[]);
+        const years = []; const track = [];
+        for (let i=0;i<yrs.length;i++){
+          const y = yrs[i];
+          if (y>=y0 && y<=y1){ years.push(y); track.push(vals[i] ?? null); }
+        }
+        out.series[cont] = metric==='hours'
+          ? { years, hours: track }
+          : { years, gdp: track };
+      });
+      return out;
+    }
+
+    function renderContinentChart(payload, metric='hours'){
+      const data = filterContinentPayload(payload, metric, yearStart, yearEnd);
+      const series = data.series || {};
+      const continents = data.continents || Object.keys(series);
+
+      const labelsSet = new Set();
+      Object.values(series).forEach(s => (s.years||[]).forEach(y => labelsSet.add(y)));
+      const labels = Array.from(labelsSet).sort((a,b)=>a-b);
+
+      const ds = [];
+      const colors = ['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd','#8c564b'];
+      continents.forEach((c, i) => {
+        const s = series[c]; if (!s) return;
+        const map = new Map((s.years||[]).map((y,idx)=>[y, (metric==='hours'? s.hours[idx] : s.gdp[idx])]));
+        const track = labels.map(y => map.get(y) ?? null);
+        ds.push({
+          label: c,
+          data: track,
+          borderColor: colors[i % colors.length],
+          backgroundColor: 'transparent',
+          tension: .15,
+          spanGaps: true,
+          hidden: (selectedContinent!=='__ALL__' && c!==selectedContinent)
+        });
+      });
+
+      const ctx = document.getElementById('contChart').getContext('2d');
+      if (chartContinent) chartContinent.destroy();
+      chartContinent = new Chart(ctx, {
+        type: 'line',
+        data: { labels, datasets: ds },
+        options: {
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'top' },
+            title: { display: true, text: metric==='hours' ? 'Continents — Working hours (avg)' : 'Continents — GDP per capita (avg, USD)' }
+          },
+          interaction:{mode:'index',intersect:false},
+          scales: {
+            y: { title: { display: true, text: metric==='hours' ? 'Hours' : 'USD' }, beginAtZero:false }
+          }
+        }
+      });
+    }
+
+    function updateYearLabel(){
+      const lab = document.getElementById('yrLabel');
+      lab.textContent = `${yearStart}–${yearEnd}`;
+    }
+
+    function setActiveTab(which){
+      const tc = document.getElementById('tabCountry');
+      const tn = document.getElementById('tabContinent');
+      const rowC = document.getElementById('countryRow');
+      const rowN = document.getElementById('continentRow');
+      if (which === 'continent'){
+        tc.classList.remove('active'); tn.classList.add('active');
+        rowC.style.display='none'; rowN.style.display='block';
+      }else{
+        tn.classList.remove('active'); tc.classList.add('active');
+        rowN.style.display='none'; rowC.style.display='block';
+      }
+    }
+
+    document.getElementById('tabCountry').addEventListener('click', ()=>setActiveTab('country'));
+    document.getElementById('tabContinent').addEventListener('click', async ()=>{
+      setActiveTab('continent');
+      const payload = await loadContinentTrends();
+      renderContinentChart(payload, document.getElementById('contMetric').value);
+    });
+    document.getElementById('contMetric').addEventListener('change', async (e)=>{
+      if (document.getElementById('tabContinent').classList.contains('active')){
+        const payload = await loadContinentTrends();
+        renderContinentChart(payload, e.target.value);
+      }
+    });
+
+    document.getElementById('contSelect').addEventListener('change', async (e)=>{
+      const v = e.target.value || '__ALL__';
+      selectedContinent = (v === '__ALL__') ? '__ALL__' : String(v).trim();
+      applyStyle();
+      if (document.getElementById('tabContinent').classList.contains('active')){
+        const payload = await loadContinentTrends();
+        renderContinentChart(payload, document.getElementById('contMetric').value);
+      }
+    });
+
+    const yrS = document.getElementById('yrStart');
+    const yrE = document.getElementById('yrEnd');
+    const syncRange = async ()=>{
+      if (+yrS.value > +yrE.value) {
+        if (document.activeElement === yrS) yrE.value = yrS.value;
+        else yrS.value = yrE.value;
+      }
+      yearStart = +yrS.value; yearEnd = +yrE.value;
+      updateYearLabel();
+      if (document.getElementById('tabContinent').classList.contains('active')){
+        const payload = await loadContinentTrends();
+        renderContinentChart(payload, document.getElementById('contMetric').value);
+      }
+    };
+    yrS.addEventListener('input', syncRange);
+    yrE.addEventListener('input', syncRange);
+
+    document.getElementById('closeChart').addEventListener('click', ()=>{
+      document.getElementById('selCountry').textContent='No country selected';
+      document.getElementById('selCode').textContent='—';
+      if(chartCountry) chartCountry.destroy();
+      selectedContinent='__ALL__';
+      const sel = document.getElementById('contSelect'); sel.value='__ALL__';
+      applyStyle();
+    });
+
+    // ---- basic export ----
+    document.getElementById('exportReport').addEventListener('click', async ()=>{
+      const type = +document.getElementById('reportType').value;
+      const year = +document.getElementById('year').value || 2023;
+      const selCode = (document.getElementById('selCode').textContent || '').trim();
+      const selCont = selectedContinent !== '__ALL__' ? selectedContinent : (document.getElementById('contSelect').value !== '__ALL__' ? document.getElementById('contSelect').value : '');
+
+      let url = `${BACKEND_BASE}/api/report?type=${type}&year=${encodeURIComponent(year)}`;
+
+      if (type === 1) {
+        const cont = selCont || prompt('Continent for report #1 (e.g., Asia):','');
+        if (!cont) return;
+        url += `&continent=${encodeURIComponent(cont)}`;
+      } else if (type === 2) {
+        let country = selCode || prompt('Country ISO3 or name for report #2 (e.g., CHN):','');
+        if (!country) { alert('Please select a country on the map, or input an ISO3/name.'); return; }
+        country = country.trim(); if (!country) { alert('Country cannot be empty.'); return; }
+        url += `&country=${encodeURIComponent(country)}`;
+      } else if (type === 4) {
+        const eventYear = prompt('Event year for report #4 (e.g., 2020):', String(year));
+        if (!eventYear) return;
+        const eventName = prompt('Event name (e.g., COVID-19):', 'COVID-19') || 'the event';
+        url += `&event_year=${encodeURIComponent(eventYear)}&event_name=${encodeURIComponent(eventName)}`;
+      }
+
+      try{
+        const r = await fetchWithTimeout(url, {}, 30000);
+        const data = await r.json();
+        if (!r.ok || !data || !data.text) {
+          alert(`Report error: ${data?.error || r.status}`); return;
+        }
+        const blob = new Blob([data.text], {type: 'text/plain;charset=utf-8'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `report_${type}_${year}.txt`;
+        document.body.appendChild(a); a.click(); a.remove();
+      }catch(e){ alert('Report request failed.'); console.error(e); }
+    });
+
+    // ---- AI export ----
+    document.getElementById('exportReportAI').addEventListener('click', async ()=>{
+      if (!DS_KEY) { alert('Missing DeepSeek key in config.js (window.APP_CONFIG.DEEPSEEK_API_KEY)'); return; }
+      const type = +document.getElementById('reportType').value;
+      const year = +document.getElementById('year').value || 2023;
+      const selCode = (document.getElementById('selCode').textContent || '').trim();
+      const selCont = selectedContinent !== '__ALL__' ? selectedContinent : (document.getElementById('contSelect').value !== '__ALL__' ? document.getElementById('contSelect').value : '');
+
+      const templates = {
+        1: "In {year}, workers in {continent} worked an average of {avg_hours} hours, representing a {change}% {increase/decrease} compared to {previous_year}. The continent with the fastest decline since 1950 is {fastest_decline_continent}, with an average annual reduction of {decline_rate} hours.",
+        2: "In {year}, {country} recorded {country_hours} working hours per worker, which is {diff} hours {above/below} the {continent} average of {continent_avg}. Over the last five years, this gap has {narrowed/widened} by {delta} hours.",
+        3: "In {year}, the countries with the longest working hours were {top1}, {top2}, and {top3}, all located in {continent_group}. Meanwhile, {bottom1} and {bottom2} had the shortest working hours, reflecting stronger labor protections and productivity efficiency.",
+        4: "Task: Write a short, factual report about year {event_year}. If the API context provides lists `top_up` and `top_down`, use them to report countries that experienced positive (GDP growth) and negative (GDP contraction) changes in {event_year}, including their growth/decline values (use the provided percentages and absolute changes). If these lists are missing, identify the most salient global event in {event_year} (e.g., pandemics, financial crises, wars) and discuss likely expansion/contraction examples with approximate values (use integers or ranges, avoid fabricating precise numbers). Then summarize the working-hours effect ONLY with API context: global average from {before_value} to {after_value}; continent with largest shift {continent} ({change} hours).",
+        5: "Countries with higher GDP per capita tend to have shorter working hours. In {year}, the correlation coefficient between GDP per capita and working hours across all countries was {correlation_value}. Notably, {country_example} had a GDP per capita of {gdp_value} and {hours_value} annual working hours."
+      };
+
+      let url = `${BACKEND_BASE}/api/report_ai?type=${type}&year=${encodeURIComponent(year)}&template=${encodeURIComponent(templates[type])}`;
+
+      if (type === 1) {
+        const cont = selCont || prompt('Continent for report #1 (e.g., Asia):','');
+        if (!cont) return; url += `&continent=${encodeURIComponent(cont)}`;
+      } else if (type === 2) {
+        let country = selCode || prompt('Country ISO3 or name for report #2 (e.g., CHN):','');
+        if (!country) return; country = country.trim(); if (!country) return;
+        url += `&country=${encodeURIComponent(country)}`;
+      } else if (type === 4) {
+        const eventYear = prompt('Event year for report #4 (e.g., 2020):', String(year));
+        if (!eventYear) return;
+        const eventName = prompt('Event name (e.g., COVID-19):', 'COVID-19') || 'the event';
+        url += `&event_year=${encodeURIComponent(eventYear)}&event_name=${encodeURIComponent(eventName)}`;
+      }
+
+      try{
+        const r = await fetchWithTimeout(url, { headers: { 'X-DS-KEY': DS_KEY } }, 45000);
+        const data = await r.json();
+        if (!r.ok || !data || !data.text) {
+          alert(`AI Report error: ${data?.error || r.status}`); return;
+        }
+        const blob = new Blob([data.text], {type: 'text/plain;charset=utf-8'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `report_ai_${type}_${year}.txt`;
+        document.body.appendChild(a); a.click(); a.remove();
+      }catch(e){ alert('AI Report request failed.'); console.error(e); }
+    });
+
+    // ---------- Admin ----------
+    let isAdmin = false;
+
+    async function adminFetchCountries(){
+      const r = await fetchWithTimeout(`${BACKEND_BASE}/api/admin/countries`, {
+        headers: { 'X-ADMIN-PASS': ADMIN_PASS }
+      }, 20000);
+      const data = await r.json();
+      if (!r.ok) { alert(data?.error || r.status); return null; }
+      return data;
+    }
+
+    function renderAdminTables(payload){
+      if (!payload) return;
+      const tbAll = document.querySelector('#tblAll tbody');
+      const tbDel = document.querySelector('#tblDel tbody');
+      tbAll.innerHTML = ''; tbDel.innerHTML = '';
+
+      (payload.countries || []).forEach(row=>{
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${row.iso3||''}</td><td>${row.country||''}</td><td>${row.continent||''}</td>
+          <td><button data-code="${row.iso3}" class="btnDel">Delete</button></td>`;
+        tbAll.appendChild(tr);
+      });
+      (payload.deleted || []).forEach(row=>{
+        const tr = document.createElement('tr');
+        tr.classList.add('danger');
+        tr.innerHTML = `<td>${row.iso3||''}</td><td>${row.country||''}</td><td>${row.continent||''}</td>
+          <td>${row.deleted_at||''}</td><td>${row.reason||''}</td>
+          <td><button data-code="${row.iso3}" class="btnRestore">Restore</button></td>`;
+        tbDel.appendChild(tr);
+      });
+
+      // bind buttons
+      tbAll.querySelectorAll('.btnDel').forEach(btn=>{
+        btn.addEventListener('click', async ()=>{
+          const code = btn.getAttribute('data-code');
+          const reason = prompt(`Delete ${code}? (optional reason)`, '');
+          if (code){
+            const r = await fetchWithTimeout(`${BACKEND_BASE}/api/admin/delete`, {
+              method:'POST',
+              headers:{'Content-Type':'application/json','X-ADMIN-PASS':ADMIN_PASS},
+              body: JSON.stringify({code, reason})
+            }, 20000);
+            const data = await r.json();
+            if (!r.ok){ alert(data?.error || r.status); return; }
+            document.getElementById('adminSql').textContent = `SQL: ${data.sql} — params: ${JSON.stringify(data.params)}`;
+            await reloadEverything();
+          }
+        });
+      });
+      tbDel.querySelectorAll('.btnRestore').forEach(btn=>{
+        btn.addEventListener('click', async ()=>{
+          const code = btn.getAttribute('data-code');
+          if (code && confirm(`Restore ${code}?`)){
+            const r = await fetchWithTimeout(`${BACKEND_BASE}/api/admin/restore`, {
+              method:'POST',
+              headers:{'Content-Type':'application/json','X-ADMIN-PASS':ADMIN_PASS},
+              body: JSON.stringify({code})
+            }, 20000);
+            const data = await r.json();
+            if (!r.ok){ alert(data?.error || r.status); return; }
+            document.getElementById('adminSql').textContent = `SQL: ${data.sql} — params: ${JSON.stringify(data.params)}`;
+            await reloadEverything();
+          }
+        });
+      });
+    }
+
+    async function reloadEverything(){
+      // reset caches
+      continentCache = null; membershipCache = null;
+      await loadMetrics();
+      await ensureGeoJsonLoaded();
+      applyStyle();
+      if (document.getElementById('tabContinent').classList.contains('active')) {
+        const payload = await loadContinentTrends();
+        renderContinentChart(payload, document.getElementById('contMetric').value);
+      }
+      if (isAdmin){
+        const payload = await adminFetchCountries();
+        renderAdminTables(payload);
+      }
+    }
+
+    document.getElementById('btnReloadAdmin').addEventListener('click', reloadEverything);
+
+    // search filter for admin tables
+    function attachFilter(inputId, tableId){
+      const inp = document.getElementById(inputId);
+      const tbody = document.querySelector(`#${tableId} tbody`);
+      inp.addEventListener('input', ()=>{
+        const q = inp.value.trim().toLowerCase();
+        Array.from(tbody.children).forEach(tr=>{
+          const txt = tr.textContent.toLowerCase();
+          tr.style.display = txt.includes(q) ? '' : 'none';
+        });
+      });
+    }
+    attachFilter('filterAll', 'tblAll');
+    attachFilter('filterDel', 'tblDel');
+
+    document.getElementById('adminLogin').addEventListener('click', async ()=>{
+      if (!ADMIN_PASS){
+        alert('Please set ADMIN_PASSWORD in config.js');
+        return;
+      }
+      // enter admin mode
+      isAdmin = !isAdmin;
+      document.getElementById('adminPanel').style.display = isAdmin ? 'flex' : 'none';
+      document.getElementById('adminBadge').style.display = isAdmin ? 'inline-block' : 'none';
+      if (isAdmin){
+        const payload = await adminFetchCountries();
+        renderAdminTables(payload);
+      }
+    });
+
+    // ---------- Map lifecycle ----------
+    async function renderMap(){ await loadMetrics(); await ensureGeoJsonLoaded(); applyStyle(); }
+    function initMap(){
+      if(!GMAPS_KEY){ alert('Missing Google Maps API key in config.js'); return; }
+      map = new google.maps.Map(document.getElementById('map'),{
+        center:{lat:20,lng:0}, zoom:2,
+        mapTypeControl:false, streetViewControl:false, fullscreenControl:true
+      });
+      document.getElementById('refresh').addEventListener('click',reloadEverything);
+      document.getElementById('layer').addEventListener('change',applyStyle);
+      renderMap();
+    }
+
+    (function loadGoogleMaps(){
+      const s = document.createElement('script');
+      s.src = `https://maps.googleapis.com/maps/api/js?key=${GMAPS_KEY}&callback=initMap`;
+      s.async = true; s.defer = true; document.body.appendChild(s);
+    })();
+  </script>
+</body>
+</html>
