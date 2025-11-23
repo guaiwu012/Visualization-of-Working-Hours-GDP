@@ -1,5 +1,0 @@
-window.APP_CONFIG = {
-  GOOGLE_MAPS_API_KEY: "AIzaSyCceKitjy4f3RdTwj2GF8Pr3QzaSPDrZjA",
-  DEEPSEEK_API_KEY: "sk-0e1da7685fb6415e90eec06cd46ffa51",
-  ADMIN_PASSWORD: "admin123"
-};
