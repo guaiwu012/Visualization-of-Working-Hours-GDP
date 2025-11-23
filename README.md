@@ -1,5 +1,7 @@
 
-<img width="2559" height="1178" alt="b36e163b5ee1b5fb51122cde37ef520a" src="https://github.com/user-attachments/assets/0ab58cd6-8be1-4f18-b9cf-734366b0f697" /># Working Hours × GDP — Choropleth
+<img width="2559" height="1178" alt="b36e163b5ee1b5fb51122cde37ef520a" src="https://github.com/user-attachments/assets/0ab58cd6-8be1-4f18-b9cf-734366b0f697" />
+
+# Working Hours × GDP — Choropleth
 
 An interactive visualization of **annual working hours per worker** and **GDP per capita**, combining a Google Maps choropleth, interactive time-series charts, automated narrative reports (rule-based + AI), and an **Admin mode** for managing countries in the database.
 
